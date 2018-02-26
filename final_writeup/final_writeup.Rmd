@@ -43,19 +43,35 @@ Now that we have two data sets that completely match on twitter username, we can
 
 In the file [`make_plots.R`](../R/make_plots.R), we plot some basic results of the data.
 
-![](../images/all_words_dot.png) ![](../images/all_words_bar.png)
+<table>
+<tr><td><img src="../images/all_words_dot.png"></td>
+<td><img src="../images/all_words_bar.png"></td>
+</tr>
+</table>
 
 The top plot shows how often members of each party use each word on a log scale. For example, Republicans use the word "senate" about 0.6% of the time, where Democrats use it about 0.4% of the time. The red line represents equal usage between Democrats and Republicans. The bottom plot shows the log odds ratio `log(Democrat usage/Republican usage)` for the 15 words used most by each party compared to the other. Not all words can be shown in the first plot, so let's break this up into a couple different categories.
 
-![](../images/user_tags_dot.png) ![](../images/user_tags_bar.png)
+<table>
+<tr><td><img src="../images/user_tags_dot.png"></td>
+<td><img src="../images/user_tags_bar.png"></td>
+</tr>
+</table>
 
 While some of these make intuitive sense (more Democrats tag other Democrats, and vice versa), one interesting note is that Democrats tag both `@housegop` and `@senatedems` more, and Republicans are more likely to tag `@foxnews`, `@foxbusiness`, and `@aipac` (the American Israel Public Affairs Committee, a pro-Israel lobbying group).
 
-![](../images/hash_tags_dot.png) ![](../images/hash_tags_bar.png)
+<table>
+<tr><td><img src="../images/hash_tags_dot.png"></td>
+<td><img src="../images/hash_tags_bar.png"></td>
+</tr>
+</table>
 
 In the use of hashtags, we see some opposites between the two parties: `#obamacare` vs. `#trumpcare`, `#passthebill` vs. `#killthebill` (in regards to the tax reform bill), `#marchforlife` and `#pro_life` vs. `#istandwithpp`. Some other perceived talking points of the two parties emerge: the Iran nuclear deal and the Keystone XL pipeline for Republicans, and climate change and the Trump-Russia investigation for Democrats.
 
-![](../images/reg_words_dot.png) ![](../images/reg_words_bar.png)
+<table>
+<tr><td><img src="../images/reg_words_dot.png"></td>
+<td><img src="../images/reg_words_bar.png"></td>
+</tr>
+</table>
 
 The "regular words" (not hashtags or tagged users) used have a few more potentially uninteresting words (such as "morning"), but we can still see a few things:
 
