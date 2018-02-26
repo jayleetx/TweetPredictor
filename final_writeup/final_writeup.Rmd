@@ -1,0 +1,393 @@
+---
+title: "Ain't No Party Like a Political Party"
+author: "Jay Lee, Alex Moore, Tristan Wylde-Larue"
+date: "December 7, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(glmnet)
+library(gbm)
+library(randomForest)
+library(knitr)
+library(stringr)
+library(tibble)
+library(tidyr)
+
+load("data/full_data.RData")
+load("data/tweet_df.RData")
+load("data/tidy_tweets.RData")
+source("../DataCollection/add_congress_data.R")
+```
+
+## Introduction
+
+Our team sought to answer an intriguing question: Can we predict the political party of twitter users from the words they tweet? After some discussion, we narrowed this question down to inference on current members of Congress. To this end, we utilized the Twitter API to gather the last year's tweets from all Senate and House members. Taking a random sample of tweets, we distilled this huge mine of information into the density of the words used by each user, as a ratio compared to the person who used the word the most often.
+
+With this data we performed unsupervised learning techniques like principal component analysis (PCA) and clustering, as well as supervised techniques like logistic regression and the random forest. Our aim in performing these methods was to infer from the data. By making models with improved predictive capability, we can gather more acute insights into the structure of the data and the language associated to political party.
+
+Note: in general, the data transforms used take a while to run, so we pre-load the transformed data and only run the necessary code.
+
+## The Data
+
+All files referenced in this section are in the [`DataCollection`](DataCollection) folder. Our sources for data collection are the two files [`representatives.txt`](DataCollection/representatives.txt) and [`senators.txt`](DataCollection/senators.txt), taken from the [GWU Libraries Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/UIVHQR). These files contain the last 3,200 tweets from every member of the 115th Congress (the current session), excepting four members of the House who don't have official Twitter accounts: Collin Peterson (D-MN-07), Lacy Clay (D-MO-01), Madeline Bordallo (Guam delegate), and Gregorio Sablan (Northern Mariana Islands delegate). Each of these files is a list of tweet IDs, which uniquely identify tweet objects in the Twitter API. Metadata about how user accounts were identified is stored in the corresponding README files. Using the script [`get_twitter_data.py`](DataCollection/get_twitter_data.py), we pulled down a random sample of 10,001 tweets from the House of Representatives [(`10001_house.zip`)](DataCollection/10001_house.zip) and 50,000 tweets from the Senate [(`50000_senate.zip`)](DataCollection/50000_senate.zip).
+
+Our second data set is [`legislators-current.csv`](DataCollection/legislators-current.csv), which contains (among other variables) the following information on all current members of Congress: name, state, chamber (House or Senate), district (if House), party, website, and social media account names. We use this data set to identify the political party of each twitter account in the data set. Because this file comes from a different source than our twitter data and some politicians use multiple twitter accounts (for example, `@POTUS` versus `@realDonaldTrump`), some manual cleaning was needed to make sure all accounts in the twitter data set are present in the congress data set. In the script [`add_congress_data.R`](DataCollection/add_congress_data.R), we "fill in" this information, which mostly ended up just being replacements with different capitalization.
+
+Now that we have two data sets that completely match on twitter username, we can transform the data into the form we want. The [`json_to_df.R`](json_to_df.R) script takes in the tweets as JSON files, extracts the information we're interested in from each tweet, and creates a dataframe out of this. Each row of this dataframe is a tweet, and the columns are variables like tweet id, timestamp, text, and author. The [`tidy_text.R`](tidy_text.R) script parses out the content of the tweets and counts the occurrences of each word by user, scales each row and column, then joins this with the `congress_df` dataset to make [`full_data.RData`](data/full_data.RData). Each row of this dataset is a user, each column is a different word used, and the entries are scale proportions of how often a user used each word. For ease of computation, only words used by at least 10 distinct users were considered.
+
+## Exploratory Data Analysis
+
+In the file [`make_plots.R`](make_plots.R), we plot some basic results of the data.
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+source("make_plots.R")
+all_words_dot
+all_words_bar
+```
+
+The top plot shows how often members of each party use each word on a log scale. For example, Republicans use the word "senate" about 0.6% of the time, where Democrats use it about 0.4% of the time. The red line represents equal usage between Democrats and Republicans. The bottom plot shows the log odds ratio `log(Democrat usage/Republican usage)` for the 15 words used most by each party compared to the other. Not all words can be shown in the first plot, so let's break this up into a couple different categories.
+
+```{r echo = FALSE, warning = FALSE}
+user_tags_dot
+user_tags_bar
+```
+
+While some of these make intuitive sense (more Democrats tag other Democrats, and vice versa), one interesting note is that Democrats tag both `@housegop` and `@senatedems` more, and Republicans are more likely to tag `@foxnews`, `@foxbusiness`, and `@aipac` (the American Israel Public Affairs Committee, a pro-Israel lobbying group).
+
+```{r echo = FALSE, warning = FALSE}
+hash_tags_dot
+hash_tags_bar
+```
+
+In the use of hashtags, we see some opposites between the two parties: `#obamacare` vs. `#trumpcare`, `#passthebill` vs. `#killthebill` (in regards to the tax reform bill), `#marchforlife` and `#pro_life` vs. `#istandwithpp`. Some other perceived talking points of the two parties emerge: the Iran nuclear deal and the Keystone XL pipeline for Republicans, and climate change and the Trump-Russia investigation for Democrats.
+
+```{r echo = FALSE, warning = FALSE}
+reg_words_dot
+reg_words_bar
+```
+
+The "regular words" (not hashtags or tagged users) used have a few more potentially uninteresting words (such as "morning"), but we can still see a few things:
+
+- Republicans tweet a lot about Obama, Democrats tweet a lot about Trump
+
+- Republicans prefer the word "obamacare", Democrats prefer "aca"
+
+## Modeling
+
+### PCA
+
+It turns out that visualizing a data set with 4345 variables is tricky, to say the least. To get around this, we applied PCA to see what actually made a difference in the data.
+
+```{r}
+d <- full_data[,-(1:2)]
+pca1 <- prcomp(d)
+pc_df <- data.frame(PC = 1:20,
+                    PVE = pca1$sdev[1:20]^2 / sum(pca1$sdev[1:20]^2))
+ggplot(pc_df, aes(x = PC, y = PVE)) +
+  geom_line() + 
+  geom_point()
+```
+
+From the scree plot here, we can see that the first 3 PCs really account for the vast majority of the structure in the data.
+
+```{r warning = FALSE}
+scores_df <- data.frame(user = full_data$twitter,
+                         party = full_data$party_id,
+                         PC1 = pca1$x[,1],
+                         PC2 = pca1$x[,2],
+                         PC3 = pca1$x[,3],
+                         PC4 = pca1$x[,4]) %>%
+  left_join(congress_df, by = c("user" = "twitter"))
+
+loading_df <- data.frame(word = colnames(d),pca1$rotation[ ,1:4])
+
+ggplot(scores_df, aes(x=PC1, y = party)) + geom_jitter()
+```
+
+The first principal component does a pretty good job of encoding what party the user belongs to, Democrat (-) or Republican (+).
+
+```{r}
+ggplot(scores_df, aes(x=PC2, y = chamber_type)) + geom_jitter()
+```
+
+The second principal component appears to distinguish Representatives (+) from Senators (-).
+
+```{r}
+kable(arrange(loading_df, desc(PC3))[c(1:10,4336:4345), ])
+```
+
+The third principal component weights users differently based on whether they talk more about health care (+) or the Russia investigation (-). 
+
+We expected the first one to be party, and spent a while trying to figure out what the second PC could be (but it makes sense that chamber shows up). The 3rd one, however, was the most surprising.
+
+Below we've plotted a summary of the first two components, along with the non-text variables we think they best encode.
+
+```{r}
+ggplot(scores_df,aes(x = PC1, y = PC2, color = party, shape = chamber_type)) +
+  geom_point() +
+  scale_color_manual(values=c("#619CFF","#00BA38","#F8766D")) +
+  scale_shape_manual(values=c(1,16))
+```
+
+### Clustering
+
+```{r cache = T}
+km1 <- kmeans(d, centers = 1)
+km2 <- kmeans(d, centers = 2, iter.max = 10, nstart = 20)
+km3 <- kmeans(d, centers = 3, iter.max = 10, nstart = 20)
+km4 <- kmeans(d, centers = 4, iter.max = 10, nstart = 20)
+km5 <- kmeans(d, centers = 5)
+km6 <- kmeans(d, centers = 6)
+km7 <- kmeans(d, centers = 7)
+
+bub <- data.frame(ClusterNumber = 1:7,
+                  tot.within.ss = c(km1$tot.withinss,
+                                    km2$tot.withinss,
+                                    km3$tot.withinss,
+                                    km4$tot.withinss,
+                                    km5$tot.withinss,
+                                    km6$tot.withinss,
+                                    km7$tot.withinss
+                                    ))
+ggplot(bub, aes(x = ClusterNumber, y = tot.within.ss)) +
+  geom_line() +
+  geom_point()
+```
+
+This is a scree plot for the number of clusters applied to the data. No clear elbow exists in the plot, implying that there is no strong clustering of the data. Below we plot some of these clusters on the first two principal components.
+
+```{r}
+cluster_df <-data.frame(party = scores_df$party,
+                        chamber = scores_df$chamber_type,
+                        PC1 = pca1$x[,1],
+                        PC2 = pca1$x[,2],
+                        k2 = km2$cluster, k3=km3$cluster, k4=km4$cluster)
+ggplot(cluster_df, aes(x = PC1, y = PC2, color = as.factor(k2),shape=party)) +
+  geom_point() +
+  scale_shape_manual(values=c(1,17,16))
+ggplot(cluster_df, aes(x = PC1, y = PC2, color = as.factor(k3))) + geom_point()
+ggplot(cluster_df, aes(x = PC1, y = PC2, color = as.factor(k4))) + geom_point()
+```
+
+In this analysis, 2 clusters separate the parties, 3 clusters group the entire Senate together and split the House by party, and 4 clusters adds a mysterious 4th group (sometimes this splits the Senate into parties and sometimes it sprinkles group 4 throughout, it's very variable). We can see how well the 2-clustering assigns to party:
+
+```{r}
+conf <- table(cluster_df$k2, cluster_df$party)
+kable(conf)
+```
+
+If we consider it to be a "classification model", the 2-cluster has a MCR of `r sum(diag(conf))/506`. Overall, the clustering seems to agree with our PCA in that the most identifiable feature is party, followed by chamber.
+
+### Naive Model
+
+```{r}
+naive_mcr <- mean(scores_df$party != "Republican")
+kable(scores_df %>% group_by(party) %>%
+  summarize(n = n(),
+            prop = n/506))
+```
+
+Our most naive model is just the mode, that every politician in the data set is a Republican. This gives us a misclassification rate of `r naive_mcr`. Any model that can improve on this (not a hard task) will give us more insight into the data.
+
+### Logistic Models
+
+Because (with 2 exceptions) we're seeking to classify into two parties, logistic regression makes sense. To fit the model, we remove the two independent senators (Bernie Sanders, VT; and Angus King, ME) from our data set. Because of the exceedingly large number of predictors, a restricted model with the lasso or ridge techniques is appealing. We use 5-fold cross-validation to prevent overfitting our models.
+
+```{r cache = TRUE}
+no_ind <- filter(full_data, party_id != "Independent") %>%
+  mutate(party_id = factor(as.character(party_id)))
+
+logit_ridge <- glmnet(data.matrix(no_ind[ ,-(1:2)]), no_ind$party_id, family = "binomial", alpha=0)
+ridge_grid <- exp(seq(0,5,length.out=50))
+ridge_cv <- cv.glmnet(data.matrix(no_ind[ ,-(1:2)]), no_ind$party_id, family = "binomial", alpha=0, nfolds=5, type.measure = "class", lambda = ridge_grid)
+ridge_bestlam <- ridge_cv$lambda.min
+ridge_pred <- predict(logit_ridge, s = ridge_bestlam, newx=data.matrix(full_data[ ,-(1:2)]), type = "class")
+ridge_mcr <- mean(ridge_pred != full_data$party_id)
+
+logit_lasso <- glmnet(data.matrix(no_ind[ ,-(1:2)]), no_ind$party_id, family = "binomial", alpha=1)
+lasso_grid <- exp(seq(-6,-2,length.out=50))
+lasso_cv <- cv.glmnet(data.matrix(no_ind[ ,-(1:2)]), no_ind$party_id, family = "binomial", alpha=1, nfolds=5, type.measure = "class", lambda = lasso_grid)
+lasso_bestlam <- lasso_cv$lambda.min
+lasso_pred <- predict(logit_lasso, s = lasso_bestlam, newx=data.matrix(full_data[ ,-(1:2)]), type = "class")
+lasso_mcr <- mean(lasso_pred != full_data$party_id)
+
+plot(ridge_cv)
+plot(lasso_cv)
+```
+
+Because both models perform better than $\lambda=0$ (regular logistic regression), we can feel confident in choosing one of these over the full logistic model. For the dataset, our ridge MCR is `r ridge_mcr`, and our lasso MCR is `r lasso_mcr`. The lasso being better makes some intuitive sense, as we would expect some words to be meaningless for prediction. We can examine which words were non-zero in the lasso model:
+
+```{r}
+kable(data.frame(word = colnames(full_data)[-(1:2)],
+                coeff = as.vector(predict(logit_lasso, s = lasso_bestlam, type = "coefficients"))[-1]) %>%
+  filter(coeff !=0) %>%
+  arrange(desc(coeff)))
+```
+
+In this list we can see some of the same topics that we found through PCA analysis, like health care and the Russia investigation, as well as net neutrality and the EPA/climate change. Judging by the magnitude of the coefficients on each side of 0, more words typically used by Democrats (as determined by our exploratory data analysis) were important in deciding what party a user belonged to.
+
+We can also check which users were misclassified by the lasso and ridge models.
+
+```{r}
+lasso_missed <- data.frame(twitter = full_data$twitter,
+                     state = scores_df$state,
+                     party = full_data$party_id,
+                     pred = lasso_pred,
+                     prob = as.vector(predict(logit_lasso, s = lasso_bestlam, newx=data.matrix(full_data[ ,-(1:2)]), type = "response")),
+                     stringsAsFactors = FALSE) %>%
+  filter(party != X1) %>%
+  arrange(desc(prob))
+kable(lasso_missed)
+
+ridge_missed <- data.frame(twitter = full_data$twitter,
+                     state = scores_df$state,
+                     party = full_data$party_id,
+                     pred = ridge_pred,
+                     prob = as.vector(predict(logit_ridge, s = ridge_bestlam, newx=data.matrix(full_data[ ,-(1:2)]), type = "response")),
+                     stringsAsFactors = FALSE) %>%
+  filter(party != X1) %>%
+  arrange(desc(prob))
+kable(ridge_missed)
+```
+
+Independents Angus King and Bernie Sanders both caucus with the Democrats, so we can consider Senator Sanders' classification correct. Of note is that both of our logistic models only misclassified Democrats as Republicans! In addition, many of these congresspeople are Democratic legislators from majority Republican states like West Virginia, Texas, and Georgia.
+
+```{r echo = F, warning = FALSE}
+scores_df <- scores_df %>%
+  mutate(misclass = user %in% c(ridge_missed$twitter, lasso_missed$twitter))
+ggplot(scores_df,aes(x = PC1, y = PC2, color = party, shape = chamber_type, size = misclass)) +
+  geom_point() +
+  scale_color_manual(values=c("#619CFF","#00BA38","#F8766D")) +
+  scale_shape_manual(values=c(1,16))
+```
+
+Plotting these missed users among all the points, we see that most of them are Democrats grouped in the Republican cloud to the right. This seems to agree with our earlier statement that PC1 encodes party.
+
+### Boosted Tree
+
+```{r cache = TRUE, message = FALSE, fig.keep = "none", warning = FALSE}
+binary <- mutate(no_ind, party_id = ifelse(party_id == "Democrat", 0, 1))
+boost_tweet <- gbm(party_id ~ .-twitter, data = binary,
+                 n.trees = 1000,
+                 shrinkage = 0.03)
+
+boost_pred <- predict(boost_tweet,
+                      newdata = full_data,
+                      n.trees = 1000,
+                      type = "response") > .5
+boost_pred <- replace(boost_pred, boost_pred==TRUE, "Republican")
+boost_pred <- replace(boost_pred, boost_pred==FALSE, "Democrat")
+boost_mcr <- mean(boost_pred != full_data$party_id)
+
+kable(head(summary(boost_tweet),20))
+```
+
+Our boosted tree's MCR is `r boost_mcr`. In the boosted tree, we really see `#trumpcare` stand out in variable importance, as well as themes like health care and net neutrality.
+
+```{r}
+boost_missed <- data.frame(twitter = full_data$twitter,
+                     state = scores_df$state,
+                     party = full_data$party_id,
+                     pred = boost_pred,
+                     prob = as.vector(predict(boost_tweet,
+                      newdata = full_data,
+                      n.trees = 1000,
+                      type = "response")),
+                     stringsAsFactors = FALSE) %>%
+  filter(party != pred) %>%
+  arrange(desc(prob))
+kable(boost_missed)
+```
+
+We see that many of the same congresspeople get misclassified in the boosted tree as in the logistic models.
+
+### Random Forest
+
+We attempted regular bagging as well, but that was computationally infeasible.
+
+```{r cache = TRUE}
+tweet_rf <- randomForest(data.matrix(no_ind[ ,-(1:2)]), no_ind$party_id, importance = TRUE)
+rf_pred <- predict(tweet_rf, newdata = data.matrix(full_data[ ,-(1:2)]), type = "response")
+rf_mcr <- mean(rf_pred != as.character(full_data$party_id))
+```
+
+Our random forest misclassification rate is `r rf_mcr`. This is slightly higher than the lasso, but still a good bit better than the ridge model.
+
+```{r}
+importance <- data.frame(tweet_rf$importance) %>%
+  rownames_to_column() %>%
+  arrange(desc(MeanDecreaseAccuracy))
+kable(head(importance, 20))
+```
+
+Many of the same words from earlier appear to have high variable importance in the random forest we fit. The most important words here also correspond to words that are most often used by Democrats, which is interesting.
+
+```{r}
+rf_missed <- data.frame(twitter = full_data$twitter,
+                        state = scores_df$state,
+                        party = full_data$party_id,
+                        pred = rf_pred,
+                        prob = predict(tweet_rf,
+                                                 newdata = data.matrix(full_data[ ,-(1:2)]),
+                                                 type = "prob")[ ,2],
+                     stringsAsFactors = FALSE) %>%
+  filter(party != as.character(pred)) %>%
+  arrange(desc(prob))
+kable(rf_missed)
+```
+
+In addition to the two Independents, the forest misclassified Rep. Vicente González of Texas' 15th Congressional District.
+
+## Discussion
+
+To recap, our models' misclassification rates were:
+
+- Naive - `r naive_mcr`
+- Logistic Ridge - `r ridge_mcr`
+- Logistic Lasso - `r lasso_mcr`
+- Boosted Tree - `r boost_mcr`
+- Random Forest - `r rf_mcr`
+
+Our first 3 PCs encoded party, chamber, and whether a user talked more about health care or the Russia investigation, respectively. Our clustering grouped first by party, then by chamber.
+
+We can think about which members of Congress our non-naive models found it harder to classify.
+
+```{r warning = FALSE}
+missed <- data.frame(missed = unique(c(ridge_missed$twitter, lasso_missed$twitter, boost_missed$twitter, rf_missed$twitter))) %>%
+  left_join(congress_df, by = c("missed" = "twitter"))
+kable(missed)
+```
+
+Again, we ignore Senator Sanders' misclassification because he is considered farther to left than the rest of the Democratic party and caucuses with Democrats. Many of the people misclassified are members of the Blue Dog Coalition, a House Caucus of "fiscally-responsible Democrats" who are traditionally more conservative than the party in general.
+
+```{r}
+blue_dogs <- c("Costa", "Cuellar", "Lipinski", "Bishop", "Cooper", "Correa", "Cirst", "Gonzalez", "Gottheimer", "Murphy", "O’Halleran", "Peterson", "Schneider", "Schrader", "Scott", "Sinema", "Thompson", "Vela")
+kable(filter(missed, !(last_name %in% c(blue_dogs, "Sanders"))))
+```
+
+Of the remaining members, many come from rural, southern, or typically Republican states, and our models may have picked up on some of the topics they tweet about that line up more with Republicans' tweets. One thing of note is that every model misclassified Maine Senator Angus King as a Republican, even though he is an Independent who caucuses with the Democrats. Maine has a history of strong independent parties, and King is a former Democrat who left the party before running for governor (against Susan Collins, the other current senator from Maine). Upon leaving the party, King stated that "The Democratic Party as an institution has become too much the party that is looking for something from government," indicating that he has some views sympathetic with Republicans (or at least dissimilar to Democrats).
+
+In terms of variable importance, our models noted many of the same words that we saw in our exploratory data analysis. `#trumpcare` was almost always the most important variable, and important topics included health care, the Russia investigation, and net neutrality. Most of the words considered "important" were words used more often by Democrats, which is interesting. One reason for this might be that Democrats occupied a wider range of scores on PC1, indicating that their tweets were more dissimilar and thus harder to classify.
+
+## Ideas for Further Analysis
+
+While our research question just focused on inference, originally we set out to build a predictive model. Because politicians' official Twitter accounts use such different words than "regular people", however, we would have either had to
+
+- create a database of regular Twitter users whose political affiliation we knew, or
+
+- only build a predictive model for politicians.
+
+We found logistical and ethical issues with the first option, and didn't see the point in building the second model, as almost all politicians list their party openly on their twitter account. This second method could be used, however, to maybe predict how a "non-partisan" elected official would actually act in practice. Different data would maybe be required to fit that specific need.
+
+Because we were only interested in inference, we didn't see as much of a need to worry about overfitting or model validation as if we were building predictive models. To verify the inferences we made, another data set could be created and used to test our models. However, this test data set, although it would certainly contain different tweets from our training data, would have tweets from the same people as our training data. The two data sets would not be independent in this way. Because our data set for fitting models had a relatively low ratio of observations to predictors (< 1/4), we decided to use all the data we had collected rather than just a random sample of users.
+
+## References
+
+Littman, Justin, 2017. "115th U.S. Congress Tweet Ids", Harvard Dataverse, V1, http://dx.doi.org/10.7910/DVN/UIVHQR.
+
+Repository "congress-legislators" in GitHub group "unitedstates". https://theunitedstates.io/congress-legislators/legislators-current.csv.
+

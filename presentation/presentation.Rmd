@@ -1,0 +1,183 @@
+---
+title: "Ain't No Party Like A Political Party"
+author: "Jay Lee | Alex Moore | Tristan Wylde-Larue"
+date: "December 5th 2017"
+output: ioslides_presentation
+---
+
+```{r, setup = TRUE, include = FALSE}
+load("full_data.RData")
+set.seed(1)
+library(ggplot2)
+library(dplyr)
+library(boot)
+library(randomForest)
+library(stringr)
+```
+
+
+## Introduction {.build}
+
+Our research question: Can we predict the political party of a twitter user?        
+To this end, we fit a logistic model to classify and make inferences on the political party of politician's twitters. 
+
+## PCA & Clustering
+
+```{r, echo = FALSE}
+#PCA plotting
+d <- full_data
+d1 <- d[,-1]
+d2 <- d1[,-1]
+
+means <-kmeans(x = d2, centers = 2, iter.max = 10, nstart = 20)
+pca1 <-prcomp(d2)
+pcs <- pca1$x
+PC1 <- pca1$x[,1]
+PC2 <- pca1$x[,2]
+df <-data.frame(PC1, PC2, k = means$cluster)
+
+p1 <-ggplot(df,aes(x=PC1, y=PC2, color =as.factor(k))) + geom_point()
+plot(p1)
+```
+
+
+## Naive Logistic Model {.build}
+
+```{r echo = F}
+df1 <- data.frame(PC1, PC2, party = d$party_id)
+df1 <- subset(df1, party!="Independent")
+df1$party <- as.numeric(df1$party)
+df1$party <- df1$party - 1
+df1$party <- df1$party/2
+
+m1 <- glm(data = df1 , party  ~ . , family = binomial)
+pred_df <- df1 %>%
+  mutate(pred = predict(m1, newdata = df1, type = "response"),
+         party = ifelse(party == 0, "Democrat", "Republican"))
+fun.1 <- function(x) 1/(1+(exp(1))^-(m1$coef[1]+m1$coef[2]*x))
+
+ggplot(pred_df, aes(x=PC1, y=PC2, col = pred, shape = as.factor(party))) +
+  geom_point(size = 2.5, alpha = .7) +
+  scale_shape_manual(values = c("Democrat" = 16,
+                                "Independent" = 17,
+                                "Republican" = 1))
+
+
+#misclassification rate of this model using 5fold CV
+predicted_error <- cv.glm(data = df1, glmfit = m1, K = 5)
+```
+
+```{r echo = F}
+predicted_error$delta[1]
+```
+
+
+## Consideration
+
+Skree plot - are there exactly 2 parties?
+
+```{r echo = F}
+km1 <- kmeans(d2, centers = 1)
+km2 <- kmeans(d2, centers = 2)
+km3 <- kmeans(d2, centers = 3)
+km4 <- kmeans(d2, centers = 4)
+km5 <- kmeans(d2, centers = 5)
+km6 <- kmeans(d2, centers = 6)
+km7 <- kmeans(d2, centers = 7)
+
+bub <- data.frame(ClusterNumber = 1:7,
+                  tot.within.ss = c(km1$tot.withinss,
+                                    km2$tot.withinss,
+                                    km3$tot.withinss,
+                                    km4$tot.withinss,
+                                    km5$tot.withinss,
+                                    km6$tot.withinss,
+                                    km7$tot.withinss
+                                    ))
+ggplot(bub, aes(x = ClusterNumber, y = tot.within.ss)) +
+  geom_line() +
+  geom_point()
+
+# No clear elbow!!
+```
+
+
+## Consideration Continued
+
+```{r echo = F}
+means <-kmeans(x = d2, centers = 4, iter.max = 10, nstart = 20)
+df <-data.frame(PC1, PC2, k = means$cluster, user = d$twitter)
+
+#Im so sorry for this
+p1 <-ggplot(df,aes(x=PC1, y=PC2, color =as.factor(k))) + geom_point(alpha = .25) +
+  geom_text(aes(label = user), vjust = "inward", hjust = "inward", check_overlap = TRUE)
+plot(p1)
+```
+
+## Weaknesses of Previous Model {.build}
+
+* Naive
+
+## Improved Model (Trees)
+
+```{r echo = F}
+pca_data <- data.frame(party_id = d$party_id, pcs)
+change_names <- full_data
+colnames(change_names) <- str_sub(colnames(change_names), "", 1)
+tweet_bag <- randomForest(party_id ~ . , data = pca_data, mtry = ncol(pca_data)-1)
+tweet_rf <- randomForest(party_id ~ . , data = pca_data, importance = TRUE)
+
+bag_guess <- predict(tweet_bag, newdata = pca_data, type = "response")
+bag_error <- mean(bag_guess != pca_data$party_id)
+bag_cv <- rfcv(trainx = pca_data[ ,-1],
+               train_y <- pca_data[ ,1])
+rf_guess <- predict(tweet_rf, newdata = pca_data, type = "response")
+rf_error <- mean(rf_guess != pca_data$party_id)
+rf_cv <- rfcv(trainx = pca_data[ ,-1],
+               train_y <- pca_data[ ,1])
+rf_cv_df <- data.frame(n_variables = 1:9, error = rf_cv$error.cv)
+ggplot(rf_cv_df, aes(x = n_variables, y = error)) +
+  geom_point()
+rf_cv$n.var
+```
+
+
+## Visualize Improved Model
+
+```{r echo = F}
+pred_df <- pca_data %>%
+  mutate(pred = predict(tweet_rf, newdata = pca_data, type = "response"),
+         party = ifelse(party_id == "Democrat", "Democrat", "Republican"))
+ggplot(pred_df, aes(x=PC1, y=PC2, col = pred, shape = as.factor(party))) +
+  geom_point(size = 2.5, alpha = .7) +
+  scale_shape_manual(values = c("Democrat" = 16,
+                                "Independent" = 17,
+                                "Republican" = 1))
+```
+
+
+
+## Outliers & Interesting Things
+
+- Who are these users scoring extremely low on PC1 and PC2?
+- What are the 5-clusters encoding? What's up with the density on cluster 3?
+
+## Method Continued {.build}
+
+To expand upon this research question, "Can you predict the political party of a twitter user using their tweet history," some improvements could be made:
+
+- Training and testing on members of the population to make a model that works more generally, instead of on politicians due to charged language.
+- Considering different scalings of the data such as quantile-based instead of ratio-based numerics.
+- 
+
+## Fun Takeaways
+
+![](images/all_words_dot.png)
+
+## Fun Takeaways
+
+![](images/hash_tags_dot.png)
+
+## Fun Takeaways
+
+![](images/hash_tags_bar.png)
