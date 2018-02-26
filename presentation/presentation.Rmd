@@ -6,7 +6,7 @@ output: ioslides_presentation
 ---
 
 ```{r, setup = TRUE, include = FALSE}
-load("full_data.RData")
+load("../clean_data/full_data.RData")
 set.seed(1)
 library(ggplot2)
 library(dplyr)
@@ -172,12 +172,12 @@ To expand upon this research question, "Can you predict the political party of a
 
 ## Fun Takeaways
 
-![](images/all_words_dot.png)
+![](../images/all_words_dot.png)
 
 ## Fun Takeaways
 
-![](images/hash_tags_dot.png)
+![](../images/hash_tags_dot.png)
 
 ## Fun Takeaways
 
-![](images/hash_tags_bar.png)
+![](../images/hash_tags_bar.png)

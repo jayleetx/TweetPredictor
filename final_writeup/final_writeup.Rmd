@@ -17,10 +17,10 @@ library(stringr)
 library(tibble)
 library(tidyr)
 
-load("data/full_data.RData")
-load("data/tweet_df.RData")
-load("data/tidy_tweets.RData")
-source("../DataCollection/add_congress_data.R")
+load("../clean_data/full_data.RData")
+load("../clean_data/tweet_df.RData")
+load("../clean_data/tidy_tweets.RData")
+load("../clean_data/congress_df.RData")
 ```
 
 ## Introduction
@@ -33,18 +33,18 @@ Note: in general, the data transforms used take a while to run, so we pre-load t
 
 ## The Data
 
-All files referenced in this section are in the [`DataCollection`](DataCollection) folder. Our sources for data collection are the two files [`representatives.txt`](DataCollection/representatives.txt) and [`senators.txt`](DataCollection/senators.txt), taken from the [GWU Libraries Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/UIVHQR). These files contain the last 3,200 tweets from every member of the 115th Congress (the current session), excepting four members of the House who don't have official Twitter accounts: Collin Peterson (D-MN-07), Lacy Clay (D-MO-01), Madeline Bordallo (Guam delegate), and Gregorio Sablan (Northern Mariana Islands delegate). Each of these files is a list of tweet IDs, which uniquely identify tweet objects in the Twitter API. Metadata about how user accounts were identified is stored in the corresponding README files. Using the script [`get_twitter_data.py`](DataCollection/get_twitter_data.py), we pulled down a random sample of 10,001 tweets from the House of Representatives [(`10001_house.zip`)](DataCollection/10001_house.zip) and 50,000 tweets from the Senate [(`50000_senate.zip`)](DataCollection/50000_senate.zip).
+All files referenced in this section are in the [`DataCollection`](DataCollection) folder. Our sources for data collection are the two files [`representatives.txt`](../raw_data/representatives.txt) and [`senators.txt`](../raw_data/senators.txt), taken from the [GWU Libraries Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/UIVHQR). These files contain the last 3,200 tweets from every member of the 115th Congress (the current session), excepting four members of the House who don't have official Twitter accounts: Collin Peterson (D-MN-07), Lacy Clay (D-MO-01), Madeline Bordallo (Guam delegate), and Gregorio Sablan (Northern Mariana Islands delegate). Each of these files is a list of tweet IDs, which uniquely identify tweet objects in the Twitter API. Metadata about how user accounts were identified is stored in the corresponding README files. Using the script [`get_twitter_data.py`](../raw_data/get_twitter_data.py), we pulled down a random sample of 10,001 tweets from the House of Representatives [(`10001_house.zip`)](../raw_data/10001_house.zip) and 50,000 tweets from the Senate [(`50000_senate.zip`)](../raw_data/50000_senate.zip).
 
-Our second data set is [`legislators-current.csv`](DataCollection/legislators-current.csv), which contains (among other variables) the following information on all current members of Congress: name, state, chamber (House or Senate), district (if House), party, website, and social media account names. We use this data set to identify the political party of each twitter account in the data set. Because this file comes from a different source than our twitter data and some politicians use multiple twitter accounts (for example, `@POTUS` versus `@realDonaldTrump`), some manual cleaning was needed to make sure all accounts in the twitter data set are present in the congress data set. In the script [`add_congress_data.R`](DataCollection/add_congress_data.R), we "fill in" this information, which mostly ended up just being replacements with different capitalization.
+Our second data set is [`legislators-current.csv`](../raw_data/legislators-current.csv), which contains (among other variables) the following information on all current members of Congress: name, state, chamber (House or Senate), district (if House), party, website, and social media account names. We use this data set to identify the political party of each twitter account in the data set. Because this file comes from a different source than our twitter data and some politicians use multiple twitter accounts (for example, `@POTUS` versus `@realDonaldTrump`), some manual cleaning was needed to make sure all accounts in the twitter data set are present in the congress data set. In the script [`add_congress_data.R`](../raw_data/add_congress_data.R), we "fill in" this information, which mostly ended up just being replacements with different capitalization.
 
-Now that we have two data sets that completely match on twitter username, we can transform the data into the form we want. The [`json_to_df.R`](json_to_df.R) script takes in the tweets as JSON files, extracts the information we're interested in from each tweet, and creates a dataframe out of this. Each row of this dataframe is a tweet, and the columns are variables like tweet id, timestamp, text, and author. The [`tidy_text.R`](tidy_text.R) script parses out the content of the tweets and counts the occurrences of each word by user, scales each row and column, then joins this with the `congress_df` dataset to make [`full_data.RData`](data/full_data.RData). Each row of this dataset is a user, each column is a different word used, and the entries are scale proportions of how often a user used each word. For ease of computation, only words used by at least 10 distinct users were considered.
+Now that we have two data sets that completely match on twitter username, we can transform the data into the form we want. The [`json_to_df.R`](../R/json_to_df.R) script takes in the tweets as JSON files, extracts the information we're interested in from each tweet, and creates a dataframe out of this. Each row of this dataframe is a tweet, and the columns are variables like tweet id, timestamp, text, and author. The [`tidy_text.R`](../R/tidy_text.R) script parses out the content of the tweets and counts the occurrences of each word by user, scales each row and column, then joins this with the `congress_df` dataset to make [`full_data.RData`](../clean_data/full_data.RData). Each row of this dataset is a user, each column is a different word used, and the entries are scale proportions of how often a user used each word. For ease of computation, only words used by at least 10 distinct users were considered.
 
 ## Exploratory Data Analysis
 
-In the file [`make_plots.R`](make_plots.R), we plot some basic results of the data.
+In the file [`make_plots.R`](../R/make_plots.R), we plot some basic results of the data.
 
 ```{r echo = FALSE, warning = FALSE, message = FALSE}
-source("make_plots.R")
+source("../R/make_plots.R")
 all_words_dot
 all_words_bar
 ```
